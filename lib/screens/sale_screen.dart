@@ -23,7 +23,6 @@ class _SaleScreenState extends State<SaleScreen>
   final List<OrderItem> _cart = [];
   bool _saving = false;
 
-  // للفاتورة المعلقة بعد العودة من واتساب
   Order? _pendingOrder;
   List<OrderItem>? _pendingItems;
   String? _pendingCustomerName;
@@ -48,7 +47,6 @@ class _SaleScreenState extends State<SaleScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
 
-    // لما المستخدم يرجع من واتساب
     if (state == AppLifecycleState.resumed && _waitingForWhatsApp) {
       _waitingForWhatsApp = false;
       Future.delayed(const Duration(milliseconds: 500), () {
@@ -60,6 +58,21 @@ class _SaleScreenState extends State<SaleScreen>
   double get _subtotal => _cart.fold(0.0, (sum, item) => sum + item.subtotal);
   double get _discount => double.tryParse(_discountController.text) ?? 0;
   double get _total => _subtotal - _discount;
+
+  // ⭐ المدفوع
+  double get _paid => double.tryParse(_paidController.text) ?? 0;
+
+  // ⭐ الباقي للعميل (لو المدفوع أكبر من الإجمالي)
+  double get _changeToCustomer {
+    if (_paid > _total) return _paid - _total;
+    return 0;
+  }
+
+  // ⭐ المتبقي للدفع (لو المدفوع أقل من الإجمالي)
+  double get _remainingToPay {
+    if (_paid < _total && _paid > 0) return _total - _paid;
+    return 0;
+  }
 
   Future<void> _scanBarcode() async {
     final barcode = await Navigator.push<String>(
@@ -280,7 +293,6 @@ class _SaleScreenState extends State<SaleScreen>
         return;
       }
 
-      // نحفظ الفاتورة عشان نفتحها لما نرجع
       _pendingOrder = order;
       _pendingItems = items;
       _pendingCustomerName = customerName;
@@ -317,7 +329,6 @@ class _SaleScreenState extends State<SaleScreen>
     }
   }
 
-  // نافذة مشاركة PDF بعد العودة من واتساب
   Future<void> _showPdfShareDialog() async {
     if (_pendingOrder == null ||
         _pendingItems == null ||
@@ -515,6 +526,7 @@ class _SaleScreenState extends State<SaleScreen>
     );
   }
 
+  // ⭐ ملخص الفاتورة المعدّل (مع المدفوع + المتبقي + الباقي)
   Widget _buildCompactSummary() {
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 70),
@@ -532,6 +544,7 @@ class _SaleScreenState extends State<SaleScreen>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          // ===== الصف الأول: الإجمالي + الخصم =====
           Row(
             children: [
               Expanded(
@@ -581,7 +594,10 @@ class _SaleScreenState extends State<SaleScreen>
               ),
             ],
           ),
+
           const SizedBox(height: 8),
+
+          // ===== الصف الثاني: المدفوع + زر إتمام =====
           Row(
             children: [
               SizedBox(
@@ -590,6 +606,7 @@ class _SaleScreenState extends State<SaleScreen>
                   controller: _paidController,
                   keyboardType: TextInputType.number,
                   textAlign: TextAlign.center,
+                  onChanged: (_) => setState(() {}),
                   style: const TextStyle(fontSize: 13),
                   decoration: const InputDecoration(
                     isDense: true,
@@ -634,6 +651,113 @@ class _SaleScreenState extends State<SaleScreen>
               ),
             ],
           ),
+
+          // ===== ⭐ الصف الثالث: الباقي / المتبقي =====
+          if (_paidController.text.isNotEmpty && _paid > 0) ...[
+            const SizedBox(height: 8),
+            if (_changeToCustomer > 0)
+              // الباقي للعميل
+              Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: Colors.orange.withOpacity(0.3),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.money_off,
+                        color: Colors.orange, size: 20),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'الباقي للعميل:',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      '${_changeToCustomer.toStringAsFixed(2)} ج.م',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.orange,
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else if (_remainingToPay > 0)
+              // المتبقي للدفع
+              Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.red.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: Colors.red.withOpacity(0.3),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.warning_amber_rounded,
+                        color: Colors.red, size: 20),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'المتبقي للدفع:',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      '${_remainingToPay.toStringAsFixed(2)} ج.م',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.red,
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else
+              // مدفوع بالظبط
+              Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: Colors.green.withOpacity(0.3),
+                  ),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.check_circle, color: Colors.green, size: 20),
+                    SizedBox(width: 8),
+                    Text(
+                      'مدفوع بالكامل ✅',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.green,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
         ],
       ),
     );
