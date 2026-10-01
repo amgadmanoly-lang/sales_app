@@ -21,13 +21,15 @@ class _AddProductScreenState extends State<AddProductScreen> {
   final _descriptionController = TextEditingController();
   final _priceController = TextEditingController();
   final _costController = TextEditingController();
-  final _quantityController = TextEditingController();
+
+  // ⭐ بدل _quantityController
+  final _stockController = TextEditingController(text: '0');
+  final _displayController = TextEditingController(text: '0');
+
   final _categoryController = TextEditingController();
 
   bool _saving = false;
   bool _checkingBarcode = false;
-
-  // ⭐ لما نفتح منتج موجود، نتتبعه هنا
   Product? _loadedProduct;
 
   bool get _isEditing => widget.product != null || _loadedProduct != null;
@@ -48,27 +50,25 @@ class _AddProductScreenState extends State<AddProductScreen> {
     _descriptionController.dispose();
     _priceController.dispose();
     _costController.dispose();
-    _quantityController.dispose();
+    _stockController.dispose();
+    _displayController.dispose();
     _categoryController.dispose();
     super.dispose();
   }
 
-  // ⭐ نملأ البيانات من المنتج
   void _fillData(Product p) {
     _barcodeController.text = p.barcode;
     _nameController.text = p.name;
     _descriptionController.text = p.description ?? '';
     _priceController.text = p.price.toString();
     _costController.text = p.cost.toString();
-    _quantityController.text = p.quantity.toString();
+    _stockController.text = p.stockQuantity.toString();
+    _displayController.text = p.displayQuantity.toString();
     _categoryController.text = p.category ?? '';
   }
 
-  // ⭐ فحص الباركود
   Future<void> _checkBarcode(String barcode) async {
     if (barcode.trim().isEmpty) return;
-
-    // لو إحنا بالفعل في وضع تعديل → مش محتاجين فحص
     if (widget.product != null) return;
 
     setState(() => _checkingBarcode = true);
@@ -78,7 +78,6 @@ class _AddProductScreenState extends State<AddProductScreen> {
     setState(() => _checkingBarcode = false);
 
     if (existing != null) {
-      // الباركود موجود → نفتحه للتعديل
       final confirm = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -116,7 +115,8 @@ class _AddProductScreenState extends State<AddProductScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text('💰 السعر: ${existing.price} ج.م'),
-                    Text('📊 الكمية: ${existing.quantity}'),
+                    Text('🏪 المخزن: ${existing.stockQuantity}'),
+                    Text('🛒 العرض: ${existing.displayQuantity}'),
                     Text('🔢 الباركود: ${existing.barcode}'),
                   ],
                 ),
@@ -150,14 +150,12 @@ class _AddProductScreenState extends State<AddProductScreen> {
       );
 
       if (confirm == true && mounted) {
-        // نفتح المنتج في نفس الشاشة
         setState(() {
           _loadedProduct = existing;
           _fillData(existing);
         });
         _showMessage('يمكنك تعديل المنتج الآن');
       } else if (mounted) {
-        // إلغاء → امسح الباركود
         _barcodeController.clear();
       }
     }
@@ -173,7 +171,6 @@ class _AddProductScreenState extends State<AddProductScreen> {
       setState(() {
         _barcodeController.text = result;
       });
-      // ⭐ نفحص الباركود مباشرة
       await _checkBarcode(result);
     }
   }
@@ -186,7 +183,6 @@ class _AddProductScreenState extends State<AddProductScreen> {
     try {
       final barcode = _barcodeController.text.trim();
 
-      // لو إضافة جديدة، نتأكد إن الباركود مش موجود
       if (!_isEditing) {
         final exists = await _db.barcodeExists(barcode);
         if (exists) {
@@ -195,6 +191,9 @@ class _AddProductScreenState extends State<AddProductScreen> {
           return;
         }
       }
+
+      final stock = int.parse(_stockController.text.trim());
+      final display = int.parse(_displayController.text.trim());
 
       final product = Product(
         id: _currentProduct?.id,
@@ -205,7 +204,8 @@ class _AddProductScreenState extends State<AddProductScreen> {
             : _descriptionController.text.trim(),
         price: double.parse(_priceController.text.trim()),
         cost: double.parse(_costController.text.trim()),
-        quantity: int.parse(_quantityController.text.trim()),
+        stockQuantity: stock,
+        displayQuantity: display,
         category: _categoryController.text.trim().isEmpty
             ? null
             : _categoryController.text.trim(),
@@ -247,7 +247,6 @@ class _AddProductScreenState extends State<AddProductScreen> {
           padding: const EdgeInsets.all(16),
           child: Column(
             children: [
-              // ⭐ شارة "وضع التعديل"
               if (_isEditing && widget.product == null)
                 Container(
                   width: double.infinity,
@@ -328,7 +327,6 @@ class _AddProductScreenState extends State<AddProductScreen> {
               ),
               const SizedBox(height: 16),
 
-              // اسم المنتج
               TextFormField(
                 controller: _nameController,
                 decoration: InputDecoration(
@@ -343,7 +341,6 @@ class _AddProductScreenState extends State<AddProductScreen> {
               ),
               const SizedBox(height: 16),
 
-              // الوصف
               TextFormField(
                 controller: _descriptionController,
                 maxLines: 2,
@@ -357,7 +354,6 @@ class _AddProductScreenState extends State<AddProductScreen> {
               ),
               const SizedBox(height: 16),
 
-              // السعر + التكلفة
               Row(
                 children: [
                   Expanded(
@@ -401,23 +397,24 @@ class _AddProductScreenState extends State<AddProductScreen> {
               ),
               const SizedBox(height: 16),
 
-              // الكمية + الفئة
+              // ⭐ حقل المخزن + حقل العرض
               Row(
                 children: [
                   Expanded(
                     child: TextFormField(
-                      controller: _quantityController,
+                      controller: _stockController,
                       keyboardType: TextInputType.number,
                       decoration: InputDecoration(
-                        labelText: 'الكمية',
-                        prefixIcon: const Icon(Icons.numbers),
+                        labelText: 'كمية المخزن',
+                        prefixIcon: const Icon(Icons.warehouse),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(10),
                         ),
                       ),
                       validator: (v) {
                         if (v == null || v.trim().isEmpty) return 'مطلوب';
-                        if (int.tryParse(v) == null) return 'رقم صحيح فقط';
+                        if (int.tryParse(v) == null) return 'رقم صحيح';
+                        if (int.parse(v) < 0) return 'رقم موجب';
                         return null;
                       },
                     ),
@@ -425,21 +422,59 @@ class _AddProductScreenState extends State<AddProductScreen> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: TextFormField(
-                      controller: _categoryController,
+                      controller: _displayController,
+                      keyboardType: TextInputType.number,
                       decoration: InputDecoration(
-                        labelText: 'الفئة (اختياري)',
-                        prefixIcon: const Icon(Icons.category),
+                        labelText: 'كمية العرض',
+                        prefixIcon: const Icon(Icons.storefront),
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(10),
                         ),
                       ),
+                      validator: (v) {
+                        if (v == null || v.trim().isEmpty) return 'مطلوب';
+                        if (int.tryParse(v) == null) return 'رقم صحيح';
+                        if (int.parse(v) < 0) return 'رقم موجب';
+                        return null;
+                      },
                     ),
                   ),
                 ],
               ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withOpacity(0.05),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: const [
+                    Icon(Icons.info_outline, size: 16, color: Colors.blue),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'المخزن = الكمية الاحتياطية\nالعرض = الكمية المعروضة للبيع',
+                        style: TextStyle(fontSize: 11),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              TextFormField(
+                controller: _categoryController,
+                decoration: InputDecoration(
+                  labelText: 'الفئة (اختياري)',
+                  prefixIcon: const Icon(Icons.category),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+              ),
               const SizedBox(height: 24),
 
-              // زر الحفظ
               SizedBox(
                 width: double.infinity,
                 height: 50,

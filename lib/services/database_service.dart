@@ -24,7 +24,7 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 5,
+      version: 6,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -53,6 +53,8 @@ class DatabaseService {
         description TEXT,
         price REAL NOT NULL,
         cost REAL NOT NULL,
+        stock_quantity INTEGER NOT NULL DEFAULT 0,
+        display_quantity INTEGER NOT NULL DEFAULT 0,
         quantity INTEGER NOT NULL DEFAULT 0,
         category TEXT,
         image_url TEXT,
@@ -197,12 +199,29 @@ class DatabaseService {
     }
 
     if (oldVersion < 5) {
-      // إضافة حقول ربط الجهاز للمستخدمين
       try {
         await db.execute('ALTER TABLE users ADD COLUMN device_id TEXT');
       } catch (_) {}
       try {
         await db.execute('ALTER TABLE users ADD COLUMN bound_at INTEGER');
+      } catch (_) {}
+    }
+
+    // ⭐ ترقية v6: إضافة الرصيدين للمنتجات
+    if (oldVersion < 6) {
+      try {
+        await db.execute(
+            'ALTER TABLE products ADD COLUMN stock_quantity INTEGER NOT NULL DEFAULT 0');
+      } catch (_) {}
+      try {
+        await db.execute(
+            'ALTER TABLE products ADD COLUMN display_quantity INTEGER NOT NULL DEFAULT 0');
+      } catch (_) {}
+
+      // ⭐ ترحيل البيانات: الكمية القديمة → display_quantity
+      try {
+        await db.execute(
+            'UPDATE products SET display_quantity = quantity WHERE display_quantity = 0');
       } catch (_) {}
     }
   }
@@ -263,7 +282,6 @@ class DatabaseService {
     return User.fromMap(result.first);
   }
 
-  // ربط المستخدم بجهاز
   Future<void> bindUserToDevice(int userId, String deviceId) async {
     final db = await database;
     await db.update(
@@ -277,7 +295,6 @@ class DatabaseService {
     );
   }
 
-  // فصل المستخدم عن الجهاز
   Future<void> unbindUserDevice(int userId) async {
     final db = await database;
     await db.update(
@@ -376,6 +393,77 @@ class DatabaseService {
     return product != null;
   }
 
+  // ⭐ نقل من المخزن للعرض
+  Future<bool> moveToDisplay(int productId, int amount) async {
+    final db = await database;
+    return await db.transaction((txn) async {
+      final result = await txn.query(
+        'products',
+        where: 'id = ?',
+        whereArgs: [productId],
+        limit: 1,
+      );
+
+      if (result.isEmpty) return false;
+
+      final current = result.first;
+      final stock = current['stock_quantity'] as int? ?? 0;
+      final display = current['display_quantity'] as int? ?? 0;
+
+      // ما ينفعش ننقل أكتر من المتاح في المخزن
+      final actualMove = amount > stock ? stock : amount;
+      final newStock = stock - actualMove;
+      final newDisplay = display + actualMove;
+      final newTotal = newStock + newDisplay;
+
+      await txn.update(
+        'products',
+        {
+          'stock_quantity': newStock,
+          'display_quantity': newDisplay,
+          'quantity': newTotal,
+        },
+        where: 'id = ?',
+        whereArgs: [productId],
+      );
+
+      return actualMove > 0;
+    });
+  }
+
+  // ⭐ إضافة للمخزن (استلام من مورد)
+  Future<bool> addToStock(int productId, int amount) async {
+    final db = await database;
+    return await db.transaction((txn) async {
+      final result = await txn.query(
+        'products',
+        where: 'id = ?',
+        whereArgs: [productId],
+        limit: 1,
+      );
+
+      if (result.isEmpty) return false;
+
+      final current = result.first;
+      final stock = current['stock_quantity'] as int? ?? 0;
+      final display = current['display_quantity'] as int? ?? 0;
+      final newStock = stock + amount;
+      final newTotal = newStock + display;
+
+      await txn.update(
+        'products',
+        {
+          'stock_quantity': newStock,
+          'quantity': newTotal,
+        },
+        where: 'id = ?',
+        whereArgs: [productId],
+      );
+
+      return true;
+    });
+  }
+
   // ==================== Orders ====================
 
   Future<String> generateOrderNumber(OrderType type) async {
@@ -392,6 +480,7 @@ class DatabaseService {
     return '$prefix-$dateStr-${count.toString().padLeft(4, '0')}';
   }
 
+  // ⭐ createOrder بيخصم من العرض في حالة البيع، ومن المخزن في حالة المرتجع
   Future<int> createOrder(Order order, List<OrderItem> items) async {
     final db = await database;
     return await db.transaction((txn) async {
@@ -411,16 +500,32 @@ class DatabaseService {
         );
 
         if (result.isNotEmpty) {
-          final currentQty = result.first['quantity'] as int;
-          int newQty;
+          final current = result.first;
+          final stock = current['stock_quantity'] as int? ?? 0;
+          final display = current['display_quantity'] as int? ?? 0;
+
+          int newStock = stock;
+          int newDisplay = display;
+
           if (order.type == OrderType.sale) {
-            newQty = currentQty - item.quantity;
+            // بيع → ننقص من العرض
+            newDisplay = display - item.quantity;
+            if (newDisplay < 0) newDisplay = 0;
           } else {
-            newQty = currentQty + item.quantity;
+            // مرتجع → نزيد في المخزن (أو العرض حسب رغبتك)
+            // ⭐ هنضيف للمخزن
+            newStock = stock + item.quantity;
           }
+
+          final newTotal = newStock + newDisplay;
+
           await txn.update(
             'products',
-            {'quantity': newQty},
+            {
+              'stock_quantity': newStock,
+              'display_quantity': newDisplay,
+              'quantity': newTotal,
+            },
             where: 'id = ?',
             whereArgs: [item.productId],
           );
