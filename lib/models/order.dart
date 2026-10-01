@@ -2,15 +2,15 @@ enum OrderType { sale, returnOrder }
 
 class Order {
   final int? id;
-  final String orderNumber;      // رقم الفاتورة
-  final OrderType type;          // بيع أو مرتجع
-  final int? originalOrderId;    // للفواتير المرتجعة
-  final double total;            // الإجمالي
-  final double discount;         // الخصم
-  final double paid;             // المدفوع
-  final String? notes;           // ملاحظات
-  final DateTime createdAt;      // تاريخ الفاتورة
-  final int? userId;             // الموظف اللي عملها
+  final String orderNumber;
+  final OrderType type;
+  final int? originalOrderId;
+  final double total;
+  final double discount;
+  final double paid;
+  final String? notes;
+  final DateTime createdAt;
+  final int? userId;
 
   Order({
     this.id,
@@ -25,15 +25,12 @@ class Order {
     this.userId,
   }) : createdAt = createdAt ?? DateTime.now();
 
-  // نوع الفاتورة بالعربي
   String get typeNameAr {
     return type == OrderType.sale ? 'بيع' : 'مرتجع';
   }
 
-  // المتبقي
   double get remaining => total - paid;
 
-  // من Map
   factory Order.fromMap(Map<String, dynamic> map) {
     return Order(
       id: map['id'] as int?,
@@ -49,7 +46,6 @@ class Order {
     );
   }
 
-  // إلى Map
   Map<String, dynamic> toMap() {
     return {
       if (id != null) 'id': id,
@@ -68,12 +64,15 @@ class Order {
 
 class OrderItem {
   final int? id;
-  final int? orderId;          // الفاتورة الأم
-  final int productId;         // المنتج
-  final String productName;    // اسم المنتج (للعرض حتى لو اتحذف)
-  final String barcode;        // الباركود
-  final double price;          // سعر الوحدة
-  final int quantity;          // الكمية
+  final int? orderId;
+  final int productId;
+  final String productName;
+  final String barcode;
+  final double price;
+  final int quantity;
+
+  // ⭐ أقصى كمية متاحة على العرض (مش بتتحفظ في قاعدة البيانات)
+  final int maxQuantity;
 
   OrderItem({
     this.id,
@@ -83,12 +82,14 @@ class OrderItem {
     required this.barcode,
     required this.price,
     required this.quantity,
+    this.maxQuantity = 0,
   });
 
-  // الإجمالي الفرعي
   double get subtotal => price * quantity;
 
-  // من Map
+  // ⭐ هل وصلنا للحد الأقصى؟
+  bool get isMaxedOut => maxQuantity > 0 && quantity >= maxQuantity;
+
   factory OrderItem.fromMap(Map<String, dynamic> map) {
     return OrderItem(
       id: map['id'] as int?,
@@ -98,10 +99,10 @@ class OrderItem {
       barcode: map['barcode'] as String,
       price: (map['price'] as num).toDouble(),
       quantity: map['quantity'] as int,
+      // maxQuantity مش بيتخزن في DB — يبقى 0 عند التحميل
     );
   }
 
-  // إلى Map
   Map<String, dynamic> toMap() {
     return {
       if (id != null) 'id': id,
@@ -111,6 +112,30 @@ class OrderItem {
       'barcode': barcode,
       'price': price,
       'quantity': quantity,
+      // ⚠️ maxQuantity مش بيتبعت للـ DB
     };
+  }
+
+  // ⭐ نسخة معدّلة
+  OrderItem copyWith({
+    int? id,
+    int? orderId,
+    int? productId,
+    String? productName,
+    String? barcode,
+    double? price,
+    int? quantity,
+    int? maxQuantity,
+  }) {
+    return OrderItem(
+      id: id ?? this.id,
+      orderId: orderId ?? this.orderId,
+      productId: productId ?? this.productId,
+      productName: productName ?? this.productName,
+      barcode: barcode ?? this.barcode,
+      price: price ?? this.price,
+      quantity: quantity ?? this.quantity,
+      maxQuantity: maxQuantity ?? this.maxQuantity,
+    );
   }
 }

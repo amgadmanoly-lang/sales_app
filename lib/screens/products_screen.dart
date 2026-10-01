@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/product.dart';
 import '../services/database_service.dart';
 import 'add_product_screen.dart';
+import 'move_to_display_screen.dart';
 
 class ProductsScreen extends StatefulWidget {
   const ProductsScreen({super.key});
@@ -74,6 +75,17 @@ class _ProductsScreenState extends State<ProductsScreen> {
     if (result == true) _loadProducts();
   }
 
+  // ⭐ نفتح شاشة "نقل للعرض"
+  Future<void> _moveToDisplay(Product product) async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MoveToDisplayScreen(product: product),
+      ),
+    );
+    if (result == true) _loadProducts();
+  }
+
   Future<void> _deleteProduct(Product product) async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -104,7 +116,6 @@ class _ProductsScreenState extends State<ProductsScreen> {
     return Scaffold(
       body: Column(
         children: [
-          // شريط البحث
           Padding(
             padding: const EdgeInsets.all(12),
             child: TextField(
@@ -128,8 +139,6 @@ class _ProductsScreenState extends State<ProductsScreen> {
               ),
             ),
           ),
-
-          // قائمة المنتجات
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
@@ -183,32 +192,115 @@ class _ProductsScreenState extends State<ProductsScreen> {
   }
 
   Widget _buildProductCard(Product product) {
+    // ⭐ تحديد حالة العرض
+    final needsAttention = product.displayQuantity == 0 &&
+        product.stockQuantity > 0;
+
+    final displayColor = product.isDisplayOutOfStock
+        ? (product.stockQuantity > 0 ? Colors.orange : Colors.red)
+        : product.isDisplayLowStock
+            ? Colors.orange
+            : Colors.green;
+
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: ListTile(
-        contentPadding: const EdgeInsets.all(12),
-        leading: Container(
-          width: 50,
-          height: 50,
-          decoration: BoxDecoration(
-            color: Colors.blue.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: const Icon(Icons.inventory_2, color: Colors.blue),
-        ),
-        title: Text(
-          product.name,
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
-        subtitle: Column(
+      elevation: needsAttention ? 4 : 2,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: needsAttention
+            ? BorderSide(color: Colors.orange.withOpacity(0.5), width: 1.5)
+            : BorderSide.none,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const SizedBox(height: 4),
-            Text('الباركود: ${product.barcode}',
-                style: const TextStyle(fontSize: 12)),
-            const SizedBox(height: 4),
+            // الصف الأول: الأيقونة + الاسم + القائمة
+            Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.inventory_2, color: Colors.blue),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        product.name,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        product.barcode,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey[600],
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                PopupMenuButton<String>(
+                  onSelected: (value) {
+                    if (value == 'edit') _openEditProduct(product);
+                    if (value == 'move') _moveToDisplay(product);
+                    if (value == 'delete') _deleteProduct(product);
+                  },
+                  itemBuilder: (_) => [
+                    const PopupMenuItem(
+                      value: 'edit',
+                      child: Row(
+                        children: [
+                          Icon(Icons.edit, size: 18),
+                          SizedBox(width: 8),
+                          Text('تعديل'),
+                        ],
+                      ),
+                    ),
+                    // ⭐ فقط لو فيه مخزن
+                    if (product.stockQuantity > 0)
+                      const PopupMenuItem(
+                        value: 'move',
+                        child: Row(
+                          children: [
+                            Icon(Icons.swap_horiz,
+                                size: 18, color: Colors.teal),
+                            SizedBox(width: 8),
+                            Text('نقل للعرض',
+                                style: TextStyle(color: Colors.teal)),
+                          ],
+                        ),
+                      ),
+                    const PopupMenuItem(
+                      value: 'delete',
+                      child: Row(
+                        children: [
+                          Icon(Icons.delete, size: 18, color: Colors.red),
+                          SizedBox(width: 8),
+                          Text('حذف', style: TextStyle(color: Colors.red)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const Divider(height: 16),
+
+            // الصف الثاني: السعر + الشرائح
             Row(
               children: [
                 Text(
@@ -216,70 +308,111 @@ class _ProductsScreenState extends State<ProductsScreen> {
                   style: const TextStyle(
                     color: Colors.green,
                     fontWeight: FontWeight.bold,
+                    fontSize: 15,
                   ),
                 ),
                 const SizedBox(width: 12),
-                _buildStockChip(product),
+
+                // ⭐ شريحة العرض
+                _buildQtyChip(
+                  Icons.storefront,
+                  'عرض: ${product.displayQuantity}',
+                  displayColor,
+                ),
+                const SizedBox(width: 6),
+
+                // ⭐ شريحة المخزن
+                _buildQtyChip(
+                  Icons.warehouse,
+                  'مخزن: ${product.stockQuantity}',
+                  Colors.blueGrey,
+                ),
               ],
             ),
-          ],
-        ),
-        trailing: PopupMenuButton<String>(
-          onSelected: (value) {
-            if (value == 'edit') _openEditProduct(product);
-            if (value == 'delete') _deleteProduct(product);
-          },
-          itemBuilder: (_) => const [
-            PopupMenuItem(
-              value: 'edit',
-              child: Row(
-                children: [
-                  Icon(Icons.edit, size: 18),
-                  SizedBox(width: 8),
-                  Text('تعديل'),
-                ],
+
+            // ⭐ تنبيه: العرض نفذ والمخزن فيه
+            if (needsAttention) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.warning_amber_rounded,
+                        color: Colors.orange, size: 18),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'العرض نفذ — فيه ${product.stockQuantity} في المخزن',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.orange,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    // ⭐ زر سريع للنقل
+                    GestureDetector(
+                      onTap: () => _moveToDisplay(product),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.teal,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Row(
+                          children: [
+                            Icon(Icons.swap_horiz,
+                                size: 12, color: Colors.white),
+                            SizedBox(width: 2),
+                            Text(
+                              'نقل',
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            PopupMenuItem(
-              value: 'delete',
-              child: Row(
-                children: [
-                  Icon(Icons.delete, size: 18, color: Colors.red),
-                  SizedBox(width: 8),
-                  Text('حذف', style: TextStyle(color: Colors.red)),
-                ],
-              ),
-            ),
+            ],
           ],
         ),
       ),
     );
   }
 
-  Widget _buildStockChip(Product product) {
-    Color color;
-    String text;
-
-    if (product.isOutOfStock) {
-      color = Colors.red;
-      text = 'نفذ';
-    } else if (product.isLowStock) {
-      color = Colors.orange;
-      text = 'متاح: ${product.quantity}';
-    } else {
-      color = Colors.blue;
-      text = 'متاح: ${product.quantity}';
-    }
-
+  Widget _buildQtyChip(IconData icon, String label, Color color) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
         color: color.withOpacity(0.1),
         borderRadius: BorderRadius.circular(8),
       ),
-      child: Text(
-        text,
-        style: TextStyle(color: color, fontSize: 12),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              color: color,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
       ),
     );
   }

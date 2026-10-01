@@ -5,6 +5,7 @@ import '../services/database_service.dart';
 import '../services/auth_service.dart';
 import '../services/pdf_service.dart';
 import 'barcode_scanner_screen.dart';
+import 'move_to_display_screen.dart';
 
 class SaleScreen extends StatefulWidget {
   const SaleScreen({super.key});
@@ -59,16 +60,13 @@ class _SaleScreenState extends State<SaleScreen>
   double get _discount => double.tryParse(_discountController.text) ?? 0;
   double get _total => _subtotal - _discount;
 
-  // ⭐ المدفوع
   double get _paid => double.tryParse(_paidController.text) ?? 0;
 
-  // ⭐ الباقي للعميل (لو المدفوع أكبر من الإجمالي)
   double get _changeToCustomer {
     if (_paid > _total) return _paid - _total;
     return 0;
   }
 
-  // ⭐ المتبقي للدفع (لو المدفوع أقل من الإجمالي)
   double get _remainingToPay {
     if (_paid < _total && _paid > 0) return _total - _paid;
     return 0;
@@ -89,28 +87,145 @@ class _SaleScreenState extends State<SaleScreen>
       return;
     }
 
-    if (product.quantity <= 0) {
-      _showMessage('المنتج غير متوفر في المخزون ❌');
+    if (product.displayQuantity <= 0) {
+      if (product.stockQuantity > 0) {
+        await _showOutOfDisplayDialog(product);
+      } else {
+        _showMessage('المنتج غير متوفر ❌');
+      }
       return;
     }
 
     _addToCart(product);
   }
 
+  Future<void> _showOutOfDisplayDialog(Product product) async {
+    final action = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.orange),
+            SizedBox(width: 8),
+            Text('العرض فاضي'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '📦 ${product.name}',
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 15,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.storefront, size: 16, color: Colors.red),
+                      SizedBox(width: 6),
+                      Text(
+                        'المتاح على العرض: 0',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.red,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      const Icon(Icons.warehouse,
+                          size: 16, color: Colors.blue),
+                      const SizedBox(width: 6),
+                      Text(
+                        'المتاح في المخزن: ${product.stockQuantity}',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blue,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'يجب نقل كمية من المخزن للعرض أولاً.',
+              style: TextStyle(fontSize: 13),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'cancel'),
+            child: const Text('إلغاء'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.pop(ctx, 'move'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.teal,
+              foregroundColor: Colors.white,
+            ),
+            icon: const Icon(Icons.swap_horiz, size: 18),
+            label: const Text('نقل للعرض'),
+          ),
+        ],
+      ),
+    );
+
+    if (action == 'move' && mounted) {
+      final result = await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => MoveToDisplayScreen(product: product),
+        ),
+      );
+
+      if (result == true && mounted) {
+        final updated = await _db.getProductById(product.id!);
+        if (updated != null && updated.displayQuantity > 0) {
+          _addToCart(updated);
+          _showMessage('تم النقل ✅ — يمكنك البيع الآن');
+        }
+      }
+    }
+  }
+
+  // ⭐ إضافة للسلة مع حفظ maxQuantity
   void _addToCart(Product product) {
     final index = _cart.indexWhere((item) => item.productId == product.id);
     if (index != -1) {
       final currentQty = _cart[index].quantity;
-      if (currentQty >= product.quantity) {
-        _showMessage('الكمية المتاحة: ${product.quantity} فقط ❌');
+
+      // ⭐ فحص maxQuantity
+      if (currentQty >= product.displayQuantity) {
+        if (product.stockQuantity > 0) {
+          _showMessage(
+              'العرض فيه ${product.displayQuantity} فقط — المخزن فيه ${product.stockQuantity}');
+          _showOutOfDisplayDialog(product);
+          return;
+        }
+        _showMessage(
+            'الكمية المتاحة على العرض: ${product.displayQuantity} فقط ❌');
         return;
       }
+
       setState(() {
-        _cart[index] = OrderItem(
-          productId: _cart[index].productId,
-          productName: _cart[index].productName,
-          barcode: _cart[index].barcode,
-          price: _cart[index].price,
+        _cart[index] = _cart[index].copyWith(
           quantity: _cart[index].quantity + 1,
         );
       });
@@ -122,21 +237,24 @@ class _SaleScreenState extends State<SaleScreen>
           barcode: product.barcode,
           price: product.price,
           quantity: 1,
+          maxQuantity: product.displayQuantity, // ⭐
         ));
       });
     }
   }
 
+  // ⭐ فحص maxQuantity في الزيادة
   void _incrementItem(int index) {
+    final item = _cart[index];
+
+    if (item.isMaxedOut) {
+      _showMessage(
+          'الكمية المتاحة على العرض: ${item.maxQuantity} فقط ❌');
+      return;
+    }
+
     setState(() {
-      final item = _cart[index];
-      _cart[index] = OrderItem(
-        productId: item.productId,
-        productName: item.productName,
-        barcode: item.barcode,
-        price: item.price,
-        quantity: item.quantity + 1,
-      );
+      _cart[index] = item.copyWith(quantity: item.quantity + 1);
     });
   }
 
@@ -146,13 +264,7 @@ class _SaleScreenState extends State<SaleScreen>
       if (item.quantity <= 1) {
         _cart.removeAt(index);
       } else {
-        _cart[index] = OrderItem(
-          productId: item.productId,
-          productName: item.productName,
-          barcode: item.barcode,
-          price: item.price,
-          quantity: item.quantity - 1,
-        );
+        _cart[index] = item.copyWith(quantity: item.quantity - 1);
       }
     });
   }
@@ -510,9 +622,12 @@ class _SaleScreenState extends State<SaleScreen>
             IconButton(
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
-              icon: const Icon(Icons.add_circle,
-                  color: Colors.green, size: 24),
-              onPressed: () => _incrementItem(index),
+              icon: Icon(
+                Icons.add_circle,
+                color: item.isMaxedOut ? Colors.grey : Colors.green,
+                size: 24,
+              ),
+              onPressed: item.isMaxedOut ? null : () => _incrementItem(index),
             ),
             IconButton(
               padding: EdgeInsets.zero,
@@ -526,7 +641,6 @@ class _SaleScreenState extends State<SaleScreen>
     );
   }
 
-  // ⭐ ملخص الفاتورة المعدّل (مع المدفوع + المتبقي + الباقي)
   Widget _buildCompactSummary() {
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 70),
@@ -544,7 +658,6 @@ class _SaleScreenState extends State<SaleScreen>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // ===== الصف الأول: الإجمالي + الخصم =====
           Row(
             children: [
               Expanded(
@@ -594,10 +707,7 @@ class _SaleScreenState extends State<SaleScreen>
               ),
             ],
           ),
-
           const SizedBox(height: 8),
-
-          // ===== الصف الثاني: المدفوع + زر إتمام =====
           Row(
             children: [
               SizedBox(
@@ -651,12 +761,9 @@ class _SaleScreenState extends State<SaleScreen>
               ),
             ],
           ),
-
-          // ===== ⭐ الصف الثالث: الباقي / المتبقي =====
           if (_paidController.text.isNotEmpty && _paid > 0) ...[
             const SizedBox(height: 8),
             if (_changeToCustomer > 0)
-              // الباقي للعميل
               Container(
                 width: double.infinity,
                 padding:
@@ -693,7 +800,6 @@ class _SaleScreenState extends State<SaleScreen>
                 ),
               )
             else if (_remainingToPay > 0)
-              // المتبقي للدفع
               Container(
                 width: double.infinity,
                 padding:
@@ -730,7 +836,6 @@ class _SaleScreenState extends State<SaleScreen>
                 ),
               )
             else
-              // مدفوع بالظبط
               Container(
                 width: double.infinity,
                 padding:
