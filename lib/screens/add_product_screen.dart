@@ -4,7 +4,7 @@ import '../services/database_service.dart';
 import 'barcode_scanner_screen.dart';
 
 class AddProductScreen extends StatefulWidget {
-  final Product? product; // للتعديل، لو null يبقى إضافة
+  final Product? product;
 
   const AddProductScreen({super.key, this.product});
 
@@ -25,20 +25,19 @@ class _AddProductScreenState extends State<AddProductScreen> {
   final _categoryController = TextEditingController();
 
   bool _saving = false;
-  bool get _isEditing => widget.product != null;
+  bool _checkingBarcode = false;
+
+  // ⭐ لما نفتح منتج موجود، نتتبعه هنا
+  Product? _loadedProduct;
+
+  bool get _isEditing => widget.product != null || _loadedProduct != null;
+  Product? get _currentProduct => widget.product ?? _loadedProduct;
 
   @override
   void initState() {
     super.initState();
-    if (_isEditing) {
-      final p = widget.product!;
-      _barcodeController.text = p.barcode;
-      _nameController.text = p.name;
-      _descriptionController.text = p.description ?? '';
-      _priceController.text = p.price.toString();
-      _costController.text = p.cost.toString();
-      _quantityController.text = p.quantity.toString();
-      _categoryController.text = p.category ?? '';
+    if (widget.product != null) {
+      _fillData(widget.product!);
     }
   }
 
@@ -54,6 +53,116 @@ class _AddProductScreenState extends State<AddProductScreen> {
     super.dispose();
   }
 
+  // ⭐ نملأ البيانات من المنتج
+  void _fillData(Product p) {
+    _barcodeController.text = p.barcode;
+    _nameController.text = p.name;
+    _descriptionController.text = p.description ?? '';
+    _priceController.text = p.price.toString();
+    _costController.text = p.cost.toString();
+    _quantityController.text = p.quantity.toString();
+    _categoryController.text = p.category ?? '';
+  }
+
+  // ⭐ فحص الباركود
+  Future<void> _checkBarcode(String barcode) async {
+    if (barcode.trim().isEmpty) return;
+
+    // لو إحنا بالفعل في وضع تعديل → مش محتاجين فحص
+    if (widget.product != null) return;
+
+    setState(() => _checkingBarcode = true);
+
+    final existing = await _db.getProductByBarcode(barcode.trim());
+
+    setState(() => _checkingBarcode = false);
+
+    if (existing != null) {
+      // الباركود موجود → نفتحه للتعديل
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.info_outline, color: Colors.blue),
+              SizedBox(width: 8),
+              Text('المنتج موجود'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'المنتج موجود بالفعل في قاعدة البيانات:',
+                style: TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '📦 ${existing.name}',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text('💰 السعر: ${existing.price} ج.م'),
+                    Text('📊 الكمية: ${existing.quantity}'),
+                    Text('🔢 الباركود: ${existing.barcode}'),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'هل تريد فتحه للتعديل؟',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton.icon(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+              ),
+              icon: const Icon(Icons.edit, size: 18),
+              label: const Text('تعديل'),
+            ),
+          ],
+        ),
+      );
+
+      if (confirm == true && mounted) {
+        // نفتح المنتج في نفس الشاشة
+        setState(() {
+          _loadedProduct = existing;
+          _fillData(existing);
+        });
+        _showMessage('يمكنك تعديل المنتج الآن');
+      } else if (mounted) {
+        // إلغاء → امسح الباركود
+        _barcodeController.clear();
+      }
+    }
+  }
+
   Future<void> _scanBarcode() async {
     final result = await Navigator.push<String>(
       context,
@@ -64,6 +173,8 @@ class _AddProductScreenState extends State<AddProductScreen> {
       setState(() {
         _barcodeController.text = result;
       });
+      // ⭐ نفحص الباركود مباشرة
+      await _checkBarcode(result);
     }
   }
 
@@ -75,7 +186,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
     try {
       final barcode = _barcodeController.text.trim();
 
-      // لو إضافة، نتأكد إن الباركود مش موجود
+      // لو إضافة جديدة، نتأكد إن الباركود مش موجود
       if (!_isEditing) {
         final exists = await _db.barcodeExists(barcode);
         if (exists) {
@@ -86,7 +197,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
       }
 
       final product = Product(
-        id: widget.product?.id,
+        id: _currentProduct?.id,
         barcode: barcode,
         name: _nameController.text.trim(),
         description: _descriptionController.text.trim().isEmpty
@@ -136,15 +247,57 @@ class _AddProductScreenState extends State<AddProductScreen> {
           padding: const EdgeInsets.all(16),
           child: Column(
             children: [
+              // ⭐ شارة "وضع التعديل"
+              if (_isEditing && widget.product == null)
+                Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: Colors.orange.withOpacity(0.3),
+                    ),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.edit, color: Colors.orange, size: 18),
+                      SizedBox(width: 8),
+                      Text(
+                        'أنت في وضع التعديل',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.orange,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
               // الباركود + زر المسح
               Row(
                 children: [
                   Expanded(
                     child: TextFormField(
                       controller: _barcodeController,
+                      enabled: !_isEditing,
                       decoration: InputDecoration(
                         labelText: 'الباركود',
                         prefixIcon: const Icon(Icons.qr_code),
+                        suffixIcon: _checkingBarcode
+                            ? const Padding(
+                                padding: EdgeInsets.all(12),
+                                child: SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                ),
+                              )
+                            : null,
+                        filled: _isEditing,
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(10),
                         ),
@@ -158,10 +311,11 @@ class _AddProductScreenState extends State<AddProductScreen> {
                     height: 56,
                     width: 56,
                     child: ElevatedButton(
-                      onPressed: _scanBarcode,
+                      onPressed: _isEditing ? null : _scanBarcode,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.blue,
                         foregroundColor: Colors.white,
+                        disabledBackgroundColor: Colors.grey[300],
                         padding: EdgeInsets.zero,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(10),
