@@ -18,6 +18,12 @@ class AuthService {
   bool get isCashier => _currentUser?.role == UserRole.cashier;
   bool get isAgent => _currentUser?.role == UserRole.agent;
 
+  // ⭐ الصلاحيات الفعلية (تشمل الأدوار المركبة)
+  bool get canManageInventory => _currentUser?.canManageInventory ?? false;
+  bool get canSell => _currentUser?.canSell ?? false;
+  bool get isPureAdmin => _currentUser?.isPureAdmin ?? false;
+  String get activeRolesText => _currentUser?.activeRolesText ?? '';
+
   // ==================== Device ID ====================
 
   Future<String> getDeviceId() async {
@@ -92,8 +98,6 @@ class AuthService {
 
   // ==================== Recovery by Phone ====================
 
-  /// استعادة بيانات الدخول عن طريق رقم التليفون
-  /// (يرجع true لو الرقم مطابق لرقم السيريال في Firebase)
   Future<RecoveryResult> recoverByPhone(String phone) async {
     final prefs = await SharedPreferences.getInstance();
     final serial = prefs.getString('serial');
@@ -105,7 +109,6 @@ class AuthService {
       );
     }
 
-    // تنظيف الرقم
     String cleanPhone = phone.replaceAll(RegExp(r'[^0-9]'), '');
 
     if (cleanPhone.isEmpty) {
@@ -139,7 +142,6 @@ class AuthService {
         );
       }
 
-      // المقارنة
       if (cleanSaved == cleanPhone ||
           cleanSaved.endsWith(cleanPhone) ||
           cleanPhone.endsWith(cleanSaved)) {
@@ -227,7 +229,34 @@ class AuthService {
     return true;
   }
 
-  // ⭐ تغيير بيانات المستخدم الحالي
+  // ⭐ تحديث الأدوار المركبة للمستخدم الحالي
+  Future<RoleUpdateResult> updateMyRoles({
+    required bool agentRoleActive,
+    required bool cashierRoleActive,
+  }) async {
+    if (_currentUser == null) {
+      return RoleUpdateResult.notLoggedIn;
+    }
+
+    if (_currentUser!.role != UserRole.admin) {
+      return RoleUpdateResult.notAdmin;
+    }
+
+    await _db.updateUserRoles(
+      _currentUser!.id!,
+      agentRoleActive: agentRoleActive,
+      cashierRoleActive: cashierRoleActive,
+    );
+
+    _currentUser = _currentUser!.copyWith(
+      agentRoleActive: agentRoleActive,
+      cashierRoleActive: cashierRoleActive,
+    );
+
+    return RoleUpdateResult.success;
+  }
+
+  // ⭐ تحديث بيانات المستخدم الحالي
   Future<ProfileUpdateResult> updateMyProfile({
     required String oldPassword,
     required String newFullName,
@@ -309,4 +338,11 @@ class RecoveryResult {
     required this.status,
     required this.phoneFromServer,
   });
+}
+
+// ⭐ نتيجة تحديث الأدوار
+enum RoleUpdateResult {
+  success,
+  notAdmin,
+  notLoggedIn,
 }

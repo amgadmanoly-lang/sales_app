@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/product.dart';
 import '../services/database_service.dart';
+import '../services/auth_service.dart';
 import 'add_product_screen.dart';
 import 'move_to_display_screen.dart';
 
@@ -13,11 +14,15 @@ class ProductsScreen extends StatefulWidget {
 
 class _ProductsScreenState extends State<ProductsScreen> {
   final _db = DatabaseService();
+  final _auth = AuthService();
   final _searchController = TextEditingController();
 
   List<Product> _products = [];
   List<Product> _filtered = [];
   bool _loading = true;
+
+  // ⭐ هل المستخدم يقدر يعدّل المخزن والعرض؟
+  bool get _canManage => _auth.canManageInventory;
 
   @override
   void initState() {
@@ -57,7 +62,19 @@ class _ProductsScreenState extends State<ProductsScreen> {
     });
   }
 
+  // ⭐ فحص الصلاحية قبل أي تعديل
+  bool _checkPermission() {
+    if (!_canManage) {
+      _showMessage(
+          'ليس لديك صلاحية. فعّل "دور المندوب" من إعدادات المستخدم.');
+      return false;
+    }
+    return true;
+  }
+
   Future<void> _openAddProduct() async {
+    if (!_checkPermission()) return;
+
     final result = await Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => const AddProductScreen()),
@@ -66,6 +83,8 @@ class _ProductsScreenState extends State<ProductsScreen> {
   }
 
   Future<void> _openEditProduct(Product product) async {
+    if (!_checkPermission()) return;
+
     final result = await Navigator.push(
       context,
       MaterialPageRoute(
@@ -75,8 +94,9 @@ class _ProductsScreenState extends State<ProductsScreen> {
     if (result == true) _loadProducts();
   }
 
-  // ⭐ نفتح شاشة "نقل للعرض"
   Future<void> _moveToDisplay(Product product) async {
+    if (!_checkPermission()) return;
+
     final result = await Navigator.push(
       context,
       MaterialPageRoute(
@@ -87,6 +107,8 @@ class _ProductsScreenState extends State<ProductsScreen> {
   }
 
   Future<void> _deleteProduct(Product product) async {
+    if (!_checkPermission()) return;
+
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -109,6 +131,15 @@ class _ProductsScreenState extends State<ProductsScreen> {
       await _db.deleteProduct(product.id!);
       _loadProducts();
     }
+  }
+
+  void _showMessage(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: Colors.orange[700],
+      ),
+    );
   }
 
   @override
@@ -139,6 +170,36 @@ class _ProductsScreenState extends State<ProductsScreen> {
               ),
             ),
           ),
+
+          // ⭐ بانر "وضع العرض فقط" لو مفيش صلاحية
+          if (!_canManage)
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.symmetric(horizontal: 12),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.blue.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.blue.withOpacity(0.2)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.visibility, size: 18, color: Colors.blue),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'أنت في وضع العرض فقط — لا يمكنك التعديل',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.blue,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
@@ -156,15 +217,18 @@ class _ProductsScreenState extends State<ProductsScreen> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _openAddProduct,
-        backgroundColor: Colors.blue,
-        icon: const Icon(Icons.add, color: Colors.white),
-        label: const Text(
-          'إضافة منتج',
-          style: TextStyle(color: Colors.white),
-        ),
-      ),
+      // ⭐ زر إضافة منتج يظهر فقط للمصرّح لهم
+      floatingActionButton: _canManage
+          ? FloatingActionButton.extended(
+              onPressed: _openAddProduct,
+              backgroundColor: Colors.blue,
+              icon: const Icon(Icons.add, color: Colors.white),
+              label: const Text(
+                'إضافة منتج',
+                style: TextStyle(color: Colors.white),
+              ),
+            )
+          : null,
     );
   }
 
@@ -192,7 +256,6 @@ class _ProductsScreenState extends State<ProductsScreen> {
   }
 
   Widget _buildProductCard(Product product) {
-    // ⭐ تحديد حالة العرض
     final needsAttention = product.displayQuantity == 0 &&
         product.stockQuantity > 0;
 
@@ -216,7 +279,6 @@ class _ProductsScreenState extends State<ProductsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // الصف الأول: الأيقونة + الاسم + القائمة
             Row(
               children: [
                 Container(
@@ -253,54 +315,54 @@ class _ProductsScreenState extends State<ProductsScreen> {
                     ],
                   ),
                 ),
-                PopupMenuButton<String>(
-                  onSelected: (value) {
-                    if (value == 'edit') _openEditProduct(product);
-                    if (value == 'move') _moveToDisplay(product);
-                    if (value == 'delete') _deleteProduct(product);
-                  },
-                  itemBuilder: (_) => [
-                    const PopupMenuItem(
-                      value: 'edit',
-                      child: Row(
-                        children: [
-                          Icon(Icons.edit, size: 18),
-                          SizedBox(width: 8),
-                          Text('تعديل'),
-                        ],
-                      ),
-                    ),
-                    // ⭐ فقط لو فيه مخزن
-                    if (product.stockQuantity > 0)
+                // ⭐ القائمة تظهر فقط لو فيه صلاحية
+                if (_canManage)
+                  PopupMenuButton<String>(
+                    onSelected: (value) {
+                      if (value == 'edit') _openEditProduct(product);
+                      if (value == 'move') _moveToDisplay(product);
+                      if (value == 'delete') _deleteProduct(product);
+                    },
+                    itemBuilder: (_) => [
                       const PopupMenuItem(
-                        value: 'move',
+                        value: 'edit',
                         child: Row(
                           children: [
-                            Icon(Icons.swap_horiz,
-                                size: 18, color: Colors.teal),
+                            Icon(Icons.edit, size: 18),
                             SizedBox(width: 8),
-                            Text('نقل للعرض',
-                                style: TextStyle(color: Colors.teal)),
+                            Text('تعديل'),
                           ],
                         ),
                       ),
-                    const PopupMenuItem(
-                      value: 'delete',
-                      child: Row(
-                        children: [
-                          Icon(Icons.delete, size: 18, color: Colors.red),
-                          SizedBox(width: 8),
-                          Text('حذف', style: TextStyle(color: Colors.red)),
-                        ],
+                      if (product.stockQuantity > 0)
+                        const PopupMenuItem(
+                          value: 'move',
+                          child: Row(
+                            children: [
+                              Icon(Icons.swap_horiz,
+                                  size: 18, color: Colors.teal),
+                              SizedBox(width: 8),
+                              Text('نقل للعرض',
+                                  style: TextStyle(color: Colors.teal)),
+                            ],
+                          ),
+                        ),
+                      const PopupMenuItem(
+                        value: 'delete',
+                        child: Row(
+                          children: [
+                            Icon(Icons.delete, size: 18, color: Colors.red),
+                            SizedBox(width: 8),
+                            Text('حذف', style: TextStyle(color: Colors.red)),
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
-                ),
+                    ],
+                  ),
               ],
             ),
             const Divider(height: 16),
 
-            // الصف الثاني: السعر + الشرائح
             Row(
               children: [
                 Text(
@@ -312,16 +374,12 @@ class _ProductsScreenState extends State<ProductsScreen> {
                   ),
                 ),
                 const SizedBox(width: 12),
-
-                // ⭐ شريحة العرض
                 _buildQtyChip(
                   Icons.storefront,
                   'عرض: ${product.displayQuantity}',
                   displayColor,
                 ),
                 const SizedBox(width: 6),
-
-                // ⭐ شريحة المخزن
                 _buildQtyChip(
                   Icons.warehouse,
                   'مخزن: ${product.stockQuantity}',
@@ -355,33 +413,34 @@ class _ProductsScreenState extends State<ProductsScreen> {
                         ),
                       ),
                     ),
-                    // ⭐ زر سريع للنقل
-                    GestureDetector(
-                      onTap: () => _moveToDisplay(product),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.teal,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: const Row(
-                          children: [
-                            Icon(Icons.swap_horiz,
-                                size: 12, color: Colors.white),
-                            SizedBox(width: 2),
-                            Text(
-                              'نقل',
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
+                    // ⭐ زر سريع للنقل (للمصرّح فقط)
+                    if (_canManage)
+                      GestureDetector(
+                        onTap: () => _moveToDisplay(product),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.teal,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: const Row(
+                            children: [
+                              Icon(Icons.swap_horiz,
+                                  size: 12, color: Colors.white),
+                              SizedBox(width: 2),
+                              Text(
+                                'نقل',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
-                    ),
                   ],
                 ),
               ),

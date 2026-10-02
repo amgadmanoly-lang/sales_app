@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/order.dart';
 import '../services/database_service.dart';
+import '../services/auth_service.dart';
 import 'sale_screen.dart';
 import 'return_screen.dart';
 import 'order_details_screen.dart';
@@ -14,12 +15,16 @@ class OrdersScreen extends StatefulWidget {
 
 class _OrdersScreenState extends State<OrdersScreen> {
   final _db = DatabaseService();
+  final _auth = AuthService();
   final _searchController = TextEditingController();
 
-  List<Order> _allOrders = [];      // كل الفواتير
-  List<Order> _orders = [];          // بعد الفلترة
+  List<Order> _allOrders = [];
+  List<Order> _orders = [];
   bool _loading = true;
   String _filter = 'all';
+
+  // ⭐ هل المستخدم يقدر يبيع؟
+  bool get _canSell => _auth.canSell;
 
   @override
   void initState() {
@@ -52,7 +57,6 @@ class _OrdersScreenState extends State<OrdersScreen> {
     });
   }
 
-  // ⭐ الفلترة الفورية
   void _applySearch(String query) {
     final q = query.trim().toLowerCase();
 
@@ -62,47 +66,63 @@ class _OrdersScreenState extends State<OrdersScreen> {
     }
 
     final filtered = _allOrders.where((o) {
-      // رقم الفاتورة
       if (o.orderNumber.toLowerCase().contains(q)) return true;
-
-      // رقم الهاتف أو اسم العميل (موجودين في notes)
       if (o.notes != null && o.notes!.toLowerCase().contains(q)) return true;
-
-      // المبلغ الإجمالي
       if (o.total.toString().contains(q)) return true;
-
       return false;
     }).toList();
 
     setState(() => _orders = filtered);
   }
 
-  // ⭐ استخراج اسم العميل من notes
   String? _extractCustomerName(Order order) {
     if (order.notes == null || order.notes!.isEmpty) return null;
-
     final notes = order.notes!;
     if (!notes.startsWith('العميل: ')) return null;
-
     final parts = notes.substring(8).split(' - ');
     if (parts.isEmpty) return null;
-
     final name = parts[0].trim();
     return name.isEmpty ? null : name;
   }
 
-  // ⭐ استخراج رقم الهاتف من notes
   String? _extractCustomerPhone(Order order) {
     if (order.notes == null || order.notes!.isEmpty) return null;
-
     final notes = order.notes!;
     if (!notes.startsWith('العميل: ')) return null;
-
     final parts = notes.substring(8).split(' - ');
     if (parts.length < 2) return null;
-
     final phone = parts[1].trim();
     return phone.isEmpty ? null : phone;
+  }
+
+  // ⭐ فحص الصلاحية قبل البيع
+  void _onSalePressed() {
+    if (!_canSell) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text(
+              'ليس لديك صلاحية البيع. فعّل "دور الكاشير" من إعدادات المستخدم.'),
+          backgroundColor: Colors.orange[700],
+        ),
+      );
+      return;
+    }
+    _openSale();
+  }
+
+  // ⭐ فحص الصلاحية قبل المرتجع
+  void _onReturnPressed() {
+    if (!_canSell) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text(
+              'ليس لديك صلاحية المرتجع. فعّل "دور الكاشير" من إعدادات المستخدم.'),
+          backgroundColor: Colors.orange[700],
+        ),
+      );
+      return;
+    }
+    _openReturn();
   }
 
   Future<void> _openSale() async {
@@ -136,7 +156,7 @@ class _OrdersScreenState extends State<OrdersScreen> {
     return Scaffold(
       body: Column(
         children: [
-          // ⭐ شريط البحث
+          // شريط البحث
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
             child: TextField(
@@ -195,29 +215,34 @@ class _OrdersScreenState extends State<OrdersScreen> {
           ),
         ],
       ),
-      floatingActionButton: Column(
-        mainAxisAlignment: MainAxisAlignment.end,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          FloatingActionButton.extended(
-            heroTag: 'return',
-            onPressed: _openReturn,
-            backgroundColor: Colors.orange,
-            icon: const Icon(Icons.assignment_return, color: Colors.white),
-            label: const Text('مرتجع',
-                style: TextStyle(color: Colors.white)),
-          ),
-          const SizedBox(height: 12),
-          FloatingActionButton.extended(
-            heroTag: 'sale',
-            onPressed: _openSale,
-            backgroundColor: Colors.green,
-            icon: const Icon(Icons.add_shopping_cart, color: Colors.white),
-            label: const Text('بيع جديد',
-                style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
+      // ⭐ الأزرار تظهر فقط لو عنده صلاحية البيع
+      floatingActionButton: _canSell
+          ? Column(
+              mainAxisAlignment: MainAxisAlignment.end,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                FloatingActionButton.extended(
+                  heroTag: 'return',
+                  onPressed: _onReturnPressed,
+                  backgroundColor: Colors.orange,
+                  icon: const Icon(Icons.assignment_return,
+                      color: Colors.white),
+                  label: const Text('مرتجع',
+                      style: TextStyle(color: Colors.white)),
+                ),
+                const SizedBox(height: 12),
+                FloatingActionButton.extended(
+                  heroTag: 'sale',
+                  onPressed: _onSalePressed,
+                  backgroundColor: Colors.green,
+                  icon: const Icon(Icons.add_shopping_cart,
+                      color: Colors.white),
+                  label: const Text('بيع جديد',
+                      style: TextStyle(color: Colors.white)),
+                ),
+              ],
+            )
+          : null,
     );
   }
 
@@ -271,8 +296,11 @@ class _OrdersScreenState extends State<OrdersScreen> {
           Text(
             _searchController.text.isNotEmpty
                 ? 'جرّب كلمة بحث أخرى'
-                : 'اضغط "بيع جديد" أو "مرتجع"',
+                : (_canSell
+                    ? 'اضغط "بيع جديد" أو "مرتجع"'
+                    : 'أنت في وضع العرض فقط'),
             style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+            textAlign: TextAlign.center,
           ),
         ],
       ),
@@ -370,7 +398,6 @@ class _OrdersScreenState extends State<OrdersScreen> {
                 ],
               ),
 
-              // ⭐ اسم العميل ورقم هاتفه
               if (customerName != null || customerPhone != null) ...[
                 const SizedBox(height: 8),
                 const Divider(height: 1),

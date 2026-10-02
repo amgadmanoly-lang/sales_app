@@ -24,7 +24,7 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 6,
+      version: 7,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -41,7 +41,9 @@ class DatabaseService {
         is_active INTEGER NOT NULL DEFAULT 1,
         created_at INTEGER NOT NULL,
         device_id TEXT,
-        bound_at INTEGER
+        bound_at INTEGER,
+        agent_role_active INTEGER NOT NULL DEFAULT 0,
+        cashier_role_active INTEGER NOT NULL DEFAULT 0
       )
     ''');
 
@@ -121,6 +123,8 @@ class DatabaseService {
       'role': 'admin',
       'is_active': 1,
       'created_at': DateTime.now().millisecondsSinceEpoch,
+      'agent_role_active': 0,
+      'cashier_role_active': 0,
     });
   }
 
@@ -207,7 +211,6 @@ class DatabaseService {
       } catch (_) {}
     }
 
-    // ⭐ ترقية v6: إضافة الرصيدين للمنتجات
     if (oldVersion < 6) {
       try {
         await db.execute(
@@ -218,10 +221,21 @@ class DatabaseService {
             'ALTER TABLE products ADD COLUMN display_quantity INTEGER NOT NULL DEFAULT 0');
       } catch (_) {}
 
-      // ⭐ ترحيل البيانات: الكمية القديمة → display_quantity
       try {
         await db.execute(
             'UPDATE products SET display_quantity = quantity WHERE display_quantity = 0');
+      } catch (_) {}
+    }
+
+    // ⭐ ترقية v7: إضافة الأدوار المركبة للمستخدمين
+    if (oldVersion < 7) {
+      try {
+        await db.execute(
+            'ALTER TABLE users ADD COLUMN agent_role_active INTEGER NOT NULL DEFAULT 0');
+      } catch (_) {}
+      try {
+        await db.execute(
+            'ALTER TABLE users ADD COLUMN cashier_role_active INTEGER NOT NULL DEFAULT 0');
       } catch (_) {}
     }
   }
@@ -315,6 +329,32 @@ class DatabaseService {
     );
   }
 
+  // ⭐ تحديث الأدوار المركبة فقط
+  Future<int> updateUserRoles(
+    int userId, {
+    bool? agentRoleActive,
+    bool? cashierRoleActive,
+  }) async {
+    final db = await database;
+
+    final Map<String, dynamic> updates = {};
+    if (agentRoleActive != null) {
+      updates['agent_role_active'] = agentRoleActive ? 1 : 0;
+    }
+    if (cashierRoleActive != null) {
+      updates['cashier_role_active'] = cashierRoleActive ? 1 : 0;
+    }
+
+    if (updates.isEmpty) return 0;
+
+    return await db.update(
+      'users',
+      updates,
+      where: 'id = ?',
+      whereArgs: [userId],
+    );
+  }
+
   Future<int> deleteUser(int id) async {
     final db = await database;
     return await db.delete('users', where: 'id = ?', whereArgs: [id]);
@@ -393,7 +433,6 @@ class DatabaseService {
     return product != null;
   }
 
-  // ⭐ نقل من المخزن للعرض
   Future<bool> moveToDisplay(int productId, int amount) async {
     final db = await database;
     return await db.transaction((txn) async {
@@ -410,7 +449,6 @@ class DatabaseService {
       final stock = current['stock_quantity'] as int? ?? 0;
       final display = current['display_quantity'] as int? ?? 0;
 
-      // ما ينفعش ننقل أكتر من المتاح في المخزن
       final actualMove = amount > stock ? stock : amount;
       final newStock = stock - actualMove;
       final newDisplay = display + actualMove;
@@ -431,7 +469,6 @@ class DatabaseService {
     });
   }
 
-  // ⭐ إضافة للمخزن (استلام من مورد)
   Future<bool> addToStock(int productId, int amount) async {
     final db = await database;
     return await db.transaction((txn) async {
@@ -480,7 +517,6 @@ class DatabaseService {
     return '$prefix-$dateStr-${count.toString().padLeft(4, '0')}';
   }
 
-  // ⭐ createOrder بيخصم من العرض في حالة البيع، ومن المخزن في حالة المرتجع
   Future<int> createOrder(Order order, List<OrderItem> items) async {
     final db = await database;
     return await db.transaction((txn) async {
@@ -508,12 +544,9 @@ class DatabaseService {
           int newDisplay = display;
 
           if (order.type == OrderType.sale) {
-            // بيع → ننقص من العرض
             newDisplay = display - item.quantity;
             if (newDisplay < 0) newDisplay = 0;
           } else {
-            // مرتجع → نزيد في المخزن (أو العرض حسب رغبتك)
-            // ⭐ هنضيف للمخزن
             newStock = stock + item.quantity;
           }
 

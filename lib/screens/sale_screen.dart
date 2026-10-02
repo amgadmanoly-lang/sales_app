@@ -30,6 +30,9 @@ class _SaleScreenState extends State<SaleScreen>
   String? _pendingCustomerPhone;
   bool _waitingForWhatsApp = false;
 
+  // ⭐ هل المستخدم يقدر يبيع؟
+  bool get _canSell => _auth.canSell;
+
   @override
   void initState() {
     super.initState();
@@ -73,6 +76,12 @@ class _SaleScreenState extends State<SaleScreen>
   }
 
   Future<void> _scanBarcode() async {
+    // ⭐ فحص الصلاحية
+    if (!_canSell) {
+      _showMessage('ليس لديك صلاحية البيع');
+      return;
+    }
+
     final barcode = await Navigator.push<String>(
       context,
       MaterialPageRoute(builder: (_) => const BarcodeScannerScreen()),
@@ -174,15 +183,17 @@ class _SaleScreenState extends State<SaleScreen>
             onPressed: () => Navigator.pop(ctx, 'cancel'),
             child: const Text('إلغاء'),
           ),
-          ElevatedButton.icon(
-            onPressed: () => Navigator.pop(ctx, 'move'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.teal,
-              foregroundColor: Colors.white,
+          // ⭐ زر النقل يظهر فقط لو عنده صلاحية إدارة المخزن
+          if (_auth.canManageInventory)
+            ElevatedButton.icon(
+              onPressed: () => Navigator.pop(ctx, 'move'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.teal,
+                foregroundColor: Colors.white,
+              ),
+              icon: const Icon(Icons.swap_horiz, size: 18),
+              label: const Text('نقل للعرض'),
             ),
-            icon: const Icon(Icons.swap_horiz, size: 18),
-            label: const Text('نقل للعرض'),
-          ),
         ],
       ),
     );
@@ -205,13 +216,11 @@ class _SaleScreenState extends State<SaleScreen>
     }
   }
 
-  // ⭐ إضافة للسلة مع حفظ maxQuantity
   void _addToCart(Product product) {
     final index = _cart.indexWhere((item) => item.productId == product.id);
     if (index != -1) {
       final currentQty = _cart[index].quantity;
 
-      // ⭐ فحص maxQuantity
       if (currentQty >= product.displayQuantity) {
         if (product.stockQuantity > 0) {
           _showMessage(
@@ -237,13 +246,12 @@ class _SaleScreenState extends State<SaleScreen>
           barcode: product.barcode,
           price: product.price,
           quantity: 1,
-          maxQuantity: product.displayQuantity, // ⭐
+          maxQuantity: product.displayQuantity,
         ));
       });
     }
   }
 
-  // ⭐ فحص maxQuantity في الزيادة
   void _incrementItem(int index) {
     final item = _cart[index];
 
@@ -274,6 +282,12 @@ class _SaleScreenState extends State<SaleScreen>
   }
 
   Future<void> _completeSale() async {
+    // ⭐ فحص الصلاحية
+    if (!_canSell) {
+      _showMessage('ليس لديك صلاحية البيع');
+      return;
+    }
+
     if (_cart.isEmpty) {
       _showMessage('السلة فاضية');
       return;
@@ -515,6 +529,73 @@ class _SaleScreenState extends State<SaleScreen>
 
   @override
   Widget build(BuildContext context) {
+    // ⭐ شاشة منع لو مش عنده صلاحية
+    if (!_canSell) {
+      return Scaffold(
+        appBar: AppBar(
+          backgroundColor: Colors.grey,
+          foregroundColor: Colors.white,
+          title: const Text('بيع جديد'),
+        ),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.lock,
+                    size: 70,
+                    color: Colors.orange,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                const Text(
+                  'غير مصرّح',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.orange,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'ليس لديك صلاحية البيع والمرتجع',
+                  style: TextStyle(fontSize: 15),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'فعّل "دور الكاشير" من إعدادات المستخدم',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Colors.grey[600],
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                ElevatedButton.icon(
+                  onPressed: () => Navigator.pop(context),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    foregroundColor: Colors.white,
+                  ),
+                  icon: const Icon(Icons.arrow_back),
+                  label: const Text('رجوع'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.green,

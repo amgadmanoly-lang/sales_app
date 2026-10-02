@@ -8,6 +8,7 @@ import 'shop_settings_screen.dart';
 import 'users_screen.dart';
 import 'backup_screen.dart';
 import 'profile_screen.dart';
+import 'user_settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -46,17 +47,30 @@ class _HomeScreenState extends State<HomeScreen> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
             child: Center(
-              child: Text(
-                user?.fullName ?? '',
-                style: const TextStyle(fontSize: 13),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    user?.fullName ?? '',
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  if (user?.role.name == 'admin' &&
+                      (user?.agentRoleActive == true ||
+                          user?.cashierRoleActive == true))
+                    Text(
+                      user?.activeRolesText ?? '',
+                      style: const TextStyle(fontSize: 10, color: Colors.white70),
+                    ),
+                ],
               ),
             ),
           ),
-          // قائمة الخيارات (للكل)
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert),
             onSelected: (value) {
               if (value == 'profile') _openProfile();
+              if (value == 'user_settings') _openUserSettings();
               if (value == 'users') _openUsers();
               if (value == 'settings') _openSettings();
               if (value == 'backup') _openBackup();
@@ -76,6 +90,19 @@ class _HomeScreenState extends State<HomeScreen> {
               // للمدير فقط
               if (_auth.isAdmin) ...[
                 const PopupMenuDivider(),
+                const PopupMenuItem(
+                  value: 'user_settings',
+                  child: Row(
+                    children: [
+                      Icon(Icons.tune, size: 20, color: Colors.orange),
+                      SizedBox(width: 10),
+                      Text(
+                        'إعدادات المستخدم',
+                        style: TextStyle(color: Colors.orange),
+                      ),
+                    ],
+                  ),
+                ),
                 const PopupMenuItem(
                   value: 'users',
                   child: Row(
@@ -165,7 +192,15 @@ class _HomeScreenState extends State<HomeScreen> {
       context,
       MaterialPageRoute(builder: (_) => const ProfileScreen()),
     );
-    // تحديث الواجهة لو البيانات اتغيرت
+    if (result == true) setState(() {});
+  }
+
+  // ⭐ إعدادات المستخدم (تبديل الأدوار)
+  Future<void> _openUserSettings() async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const UserSettingsScreen()),
+    );
     if (result == true) setState(() {});
   }
 

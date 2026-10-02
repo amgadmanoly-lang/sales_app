@@ -20,6 +20,9 @@ class _ReturnScreenState extends State<ReturnScreen> {
   final List<OrderItem> _cart = [];
   bool _saving = false;
 
+  // ⭐ هل المستخدم يقدر يعمل مرتجع؟
+  bool get _canSell => _auth.canSell;
+
   @override
   void dispose() {
     _notesController.dispose();
@@ -29,6 +32,12 @@ class _ReturnScreenState extends State<ReturnScreen> {
   double get _total => _cart.fold(0.0, (sum, item) => sum + item.subtotal);
 
   Future<void> _scanBarcode() async {
+    // ⭐ فحص الصلاحية
+    if (!_canSell) {
+      _showMessage('ليس لديك صلاحية المرتجع');
+      return;
+    }
+
     final barcode = await Navigator.push<String>(
       context,
       MaterialPageRoute(builder: (_) => const BarcodeScannerScreen()),
@@ -50,11 +59,7 @@ class _ReturnScreenState extends State<ReturnScreen> {
     final index = _cart.indexWhere((item) => item.productId == product.id);
     if (index != -1) {
       setState(() {
-        _cart[index] = OrderItem(
-          productId: _cart[index].productId,
-          productName: _cart[index].productName,
-          barcode: _cart[index].barcode,
-          price: _cart[index].price,
+        _cart[index] = _cart[index].copyWith(
           quantity: _cart[index].quantity + 1,
         );
       });
@@ -74,13 +79,7 @@ class _ReturnScreenState extends State<ReturnScreen> {
   void _incrementItem(int index) {
     setState(() {
       final item = _cart[index];
-      _cart[index] = OrderItem(
-        productId: item.productId,
-        productName: item.productName,
-        barcode: item.barcode,
-        price: item.price,
-        quantity: item.quantity + 1,
-      );
+      _cart[index] = item.copyWith(quantity: item.quantity + 1);
     });
   }
 
@@ -90,13 +89,7 @@ class _ReturnScreenState extends State<ReturnScreen> {
       if (item.quantity <= 1) {
         _cart.removeAt(index);
       } else {
-        _cart[index] = OrderItem(
-          productId: item.productId,
-          productName: item.productName,
-          barcode: item.barcode,
-          price: item.price,
-          quantity: item.quantity - 1,
-        );
+        _cart[index] = item.copyWith(quantity: item.quantity - 1);
       }
     });
   }
@@ -106,6 +99,12 @@ class _ReturnScreenState extends State<ReturnScreen> {
   }
 
   Future<void> _completeReturn() async {
+    // ⭐ فحص الصلاحية
+    if (!_canSell) {
+      _showMessage('ليس لديك صلاحية المرتجع');
+      return;
+    }
+
     if (_cart.isEmpty) {
       _showMessage('لا توجد منتجات للمرتجع');
       return;
@@ -152,6 +151,73 @@ class _ReturnScreenState extends State<ReturnScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // ⭐ شاشة منع لو مش عنده صلاحية
+    if (!_canSell) {
+      return Scaffold(
+        appBar: AppBar(
+          backgroundColor: Colors.grey,
+          foregroundColor: Colors.white,
+          title: const Text('مرتجع جديد'),
+        ),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.lock,
+                    size: 70,
+                    color: Colors.orange,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                const Text(
+                  'غير مصرّح',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.orange,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'ليس لديك صلاحية المرتجع',
+                  style: TextStyle(fontSize: 15),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'فعّل "دور الكاشير" من إعدادات المستخدم',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Colors.grey[600],
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                ElevatedButton.icon(
+                  onPressed: () => Navigator.pop(context),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    foregroundColor: Colors.white,
+                  ),
+                  icon: const Icon(Icons.arrow_back),
+                  label: const Text('رجوع'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.orange,
@@ -160,7 +226,6 @@ class _ReturnScreenState extends State<ReturnScreen> {
       ),
       body: Column(
         children: [
-          // زر مسح الباركود
           Padding(
             padding: const EdgeInsets.all(12),
             child: SizedBox(
@@ -183,8 +248,6 @@ class _ReturnScreenState extends State<ReturnScreen> {
               ),
             ),
           ),
-
-          // قائمة المنتجات
           Expanded(
             child: _cart.isEmpty
                 ? _buildEmpty()
@@ -194,8 +257,6 @@ class _ReturnScreenState extends State<ReturnScreen> {
                     itemBuilder: (ctx, i) => _buildCartItem(i),
                   ),
           ),
-
-          // ملخص
           if (_cart.isNotEmpty) _buildSummary(),
         ],
       ),
@@ -279,7 +340,6 @@ class _ReturnScreenState extends State<ReturnScreen> {
       ),
       child: Column(
         children: [
-          // الإجمالي
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
@@ -306,7 +366,6 @@ class _ReturnScreenState extends State<ReturnScreen> {
           ),
           const SizedBox(height: 10),
 
-          // ملاحظات
           TextField(
             controller: _notesController,
             maxLines: 2,
@@ -318,7 +377,6 @@ class _ReturnScreenState extends State<ReturnScreen> {
           ),
           const SizedBox(height: 12),
 
-          // زر إتمام المرتجع
           SizedBox(
             width: double.infinity,
             height: 50,
